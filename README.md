@@ -12,10 +12,12 @@ The Void is an Roblox xeno executor with the following features
 10. Walkspeed
 11. Fly Speed
 12. Jump Height
-13. Middle Mouse to toggle menu
-14. FPS Counter
+13. X To Close GUI
+14. Jumpscare
+15. Disco
+16. Weapon Giver
 
 Download instructions
 
 1. Go to this website to get the executor https://www.xeno.now/download (NEEDED TO WORK)
-2. Once you have xeno put in the code from Code.txt into xeno (NEEDED TO WORK)
+2. Once you have Xeno, put the code from Code.txt into Xeno (NEEDED TO WORK)
