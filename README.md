@@ -18,6 +18,7 @@ The Void is a Roblox script with these features:
 16. Panic Button
 17. Auto Target
 18. Auto Dodge
+19. Fling
 
 Download instructions:
 
