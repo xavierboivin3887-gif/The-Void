@@ -1,4 +1,4 @@
-The Void is an Roblox script with the following features
+The Void is a Roblox script with these features:
 
 1. Settings
 2. Music Player
@@ -19,7 +19,7 @@ The Void is an Roblox script with the following features
 17. Auto Target
 18. Auto Dodge
 
-Download instructions
+Download instructions:
 
-1. Go find an executor; the one I use is Solara, but I can't find the official website, so I can't give the link :( (NEEDED TO WORK)
-2. Once you have an executor, put the code from Code.txt into Xeno (NEEDED TO WORK)
+1. Find an executor; the one I use is Solara, but I can't find the official website, so I can't give the link. :(
+2. Once you have an executor, put the code from Code.txt into the executor.
