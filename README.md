@@ -12,7 +12,7 @@ The Void is an Roblox xeno executor with the following features
 10. Walkspeed
 11. Fly Speed
 12. Jump Height
-13. - To Hide GUI
+13. Key https://search.brave.com/search?q=- To Hide GUI (I did that because GitHub would make the key a circle for some reason.)
 14. Jumpscare
 15. Chat Spam
 16. Panic Button
