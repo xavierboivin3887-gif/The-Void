@@ -3,10 +3,10 @@ local UserInputService = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
 local CoreGui = game:GetService("CoreGui")
 local Lighting = game:GetService("Lighting")
-local SoundService = game:GetService("SoundService")
 local VirtualInputManager = game:GetService("VirtualInputManager")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TextChatService = game:GetService("TextChatService")
+local ContentProvider = game:GetService("ContentProvider")
 
 local LocalPlayer = Players.LocalPlayer
 local Camera = workspace.CurrentCamera
@@ -19,6 +19,8 @@ local currentThemeColor = DEFAULT_THEME
 local flySpeed = 50
 local walkSpeed = 16
 local jumpPower = 50
+local chatSpamText = "SPAM"
+local chatSpamDelay = 0.1
 
 -- Feature Toggle States
 local flying = false
@@ -34,9 +36,14 @@ local autoTargetConnection = nil
 local autoTargetInputConnection = nil
 local waypointsActive = false
 local waypointInputConnection = nil
-local discoActive = false
-local discoThread = nil
 local isJumpscaring = false
+local autoDodgeActive = false
+local autoDodgeMode = "bullet" -- "bullet" or "sword"
+local autoDodgeConnection = nil
+local flingActive = false
+local flingConnection = nil
+local chatSpamActive = false
+local chatSpamThread = nil
 
 -- Data Trackers
 local markedPlayers = {}
@@ -55,19 +62,9 @@ local ScreenGui = Instance.new("ScreenGui")
 pcall(function() ScreenGui.Parent = CoreGui end)
 if not ScreenGui.Parent then ScreenGui.Parent = LocalPlayer:WaitForChild("PlayerGui") end
 
--- Global Audio Handle
-local BackgroundSound = SoundService:FindFirstChild("VOID_RadioChannel")
-if not BackgroundSound then
-    BackgroundSound = Instance.new("Sound")
-    BackgroundSound.Name = "VOID_RadioChannel"
-    BackgroundSound.Volume = 2
-    BackgroundSound.Looped = true
-    BackgroundSound.Parent = SoundService
-end
-
 -- Main Frame Setup
 local MainFrame = Instance.new("Frame")
-MainFrame.Name = "VOID_GUI"; MainFrame.Size = UDim2.new(0, 180, 0, 510); MainFrame.Position = UDim2.new(0.1, 0, 0.2, 0)
+MainFrame.Name = "VOID_GUI"; MainFrame.Size = UDim2.new(0, 180, 0, 688); MainFrame.Position = UDim2.new(0.1, 0, 0.2, 0)
 MainFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 20); MainFrame.BorderSizePixel = 1; MainFrame.BorderColor3 = currentThemeColor
 MainFrame.Active = true; MainFrame.Draggable = true; MainFrame.Parent = ScreenGui
 
@@ -76,30 +73,19 @@ Title.Size = UDim2.new(1, 0, 0, 30); Title.BackgroundColor3 = Color3.fromRGB(15,
 Title.Text = "VOID GUI"; Title.TextColor3 = Color3.fromRGB(255, 255, 255); Title.Font = Enum.Font.SourceSansBold
 Title.TextSize = 13; Title.Parent = MainFrame
 
--- Top Title Buttons (Config, Goofy, Radio, Close)
+-- Top Title Buttons (Config)
 local ThemeSettingsBtn = Instance.new("TextButton")
 ThemeSettingsBtn.Size = UDim2.new(0, 22, 0, 24); ThemeSettingsBtn.Position = UDim2.new(0, 4, 0, 3)
 ThemeSettingsBtn.BackgroundColor3 = Color3.fromRGB(30, 30, 30); ThemeSettingsBtn.BorderSizePixel = 0; ThemeSettingsBtn.Text = "⚙️"
 ThemeSettingsBtn.TextColor3 = Color3.fromRGB(255, 255, 255); ThemeSettingsBtn.Font = Enum.Font.SourceSansBold
 ThemeSettingsBtn.TextSize = 13; ThemeSettingsBtn.Parent = MainFrame
 
-local GoofyBtn = Instance.new("TextButton")
-GoofyBtn.Size = UDim2.new(0, 22, 0, 24); GoofyBtn.Position = UDim2.new(0, 28, 0, 3)
-GoofyBtn.BackgroundColor3 = Color3.fromRGB(30, 30, 30); GoofyBtn.BorderSizePixel = 0; GoofyBtn.Text = "🤪"
-GoofyBtn.TextColor3 = Color3.fromRGB(255, 255, 255); GoofyBtn.Font = Enum.Font.SourceSansBold
-GoofyBtn.TextSize = 13; GoofyBtn.Parent = MainFrame
-
-local RadioBtn = Instance.new("TextButton")
-RadioBtn.Size = UDim2.new(0, 22, 0, 24); RadioBtn.Position = UDim2.new(1, -52, 0, 3)
-RadioBtn.BackgroundColor3 = Color3.fromRGB(30, 30, 30); RadioBtn.BorderSizePixel = 0; RadioBtn.Text = "📻"
-RadioBtn.TextColor3 = Color3.fromRGB(255, 255, 255); RadioBtn.Font = Enum.Font.SourceSansBold
-RadioBtn.TextSize = 13; RadioBtn.Parent = MainFrame
-
-local CloseBtn = Instance.new("TextButton")
-CloseBtn.Size = UDim2.new(0, 22, 0, 24); CloseBtn.Position = UDim2.new(1, -26, 0, 3)
-CloseBtn.BackgroundColor3 = Color3.fromRGB(150, 30, 30); CloseBtn.BorderSizePixel = 0; CloseBtn.Text = "✕"
-CloseBtn.TextColor3 = Color3.fromRGB(255, 255, 255); CloseBtn.Font = Enum.Font.SourceSansBold
-CloseBtn.TextSize = 13; CloseBtn.Parent = MainFrame
+-- Music Player Toggle Button (Top Right next to Settings)
+local MusicSettingsBtn = Instance.new("TextButton")
+MusicSettingsBtn.Size = UDim2.new(0, 22, 0, 24); MusicSettingsBtn.Position = UDim2.new(1, -26, 0, 3)
+MusicSettingsBtn.BackgroundColor3 = Color3.fromRGB(30, 30, 30); MusicSettingsBtn.BorderSizePixel = 0; MusicSettingsBtn.Text = "🎵"
+MusicSettingsBtn.TextColor3 = Color3.fromRGB(255, 255, 255); MusicSettingsBtn.Font = Enum.Font.SourceSansBold
+MusicSettingsBtn.TextSize = 13; MusicSettingsBtn.Parent = MainFrame
 
 -- Helper Functions
 local function createButton(text, yPos, defaultWhite)
@@ -134,6 +120,28 @@ local function createBottomInput(labelText, defaultVal, yPos, callback)
     return box
 end
 
+local function createTextInput(labelText, defaultVal, yPos, callback)
+    local container = Instance.new("Frame")
+    container.Size = UDim2.new(0, 160, 0, 22); container.Position = UDim2.new(0, 10, 0, yPos)
+    container.BackgroundTransparency = 1; container.Parent = MainFrame
+
+    local lbl = Instance.new("TextLabel")
+    lbl.Size = UDim2.new(0, 95, 1, 0); lbl.Position = UDim2.new(0, 0, 0, 0)
+    lbl.BackgroundTransparency = 1; lbl.Text = labelText; lbl.TextColor3 = Color3.fromRGB(180, 180, 180)
+    lbl.Font = Enum.Font.SourceSans; lbl.TextSize = 12; lbl.TextXAlignment = Enum.TextXAlignment.Left; lbl.Parent = container
+
+    local box = Instance.new("TextBox")
+    box.Size = UDim2.new(0, 65, 1, 0); box.Position = UDim2.new(0, 95, 0, 0)
+    box.BackgroundColor3 = Color3.fromRGB(25, 25, 25); box.BorderColor3 = Color3.fromRGB(50, 50, 50)
+    box.Text = tostring(defaultVal); box.TextColor3 = Color3.fromRGB(255, 255, 255)
+    box.Font = Enum.Font.SourceSansBold; box.TextSize = 12; box.ClearTextOnFocus = false; box.Parent = container
+
+    box.FocusLost:Connect(function()
+        callback(box.Text)
+    end)
+    return box
+end
+
 -- Chat Helper Function (Legacy Chat & TextChatService support)
 local function sendChatMessage(msg)
     pcall(function()
@@ -158,26 +166,47 @@ local NoFogBtn = createButton("No Fog: OFF", 188)
 local TPBtn = createButton("Teleport To Player ➡️", 218, true)
 local AutoTargetBtn = createButton("Auto Target: OFF", 248)
 local WaypointBtn = createButton("Waypoint: OFF", 278)
-local WeaponsBtn = createButton("Weapons List ➡️", 308, true)
+local JumpscareBtn = createButton("Jumpscare 👻 ➡️", 308, true)
+local AutoDodgeBtn = createButton("Auto Dodge: OFF ➡️", 338)
+local FlingBtn = createButton("Fling: OFF", 368)
+local ChatSpamBtn = createButton("Chat Spam: OFF", 398)
+local SneezeBtn = createButton("Sneeze 🤧", 428, true)
 
 -- Grouped Number Inputs
-local FlySpeedInput = createBottomInput("Fly Speed:", flySpeed, 342, function(val) flySpeed = val end)
-local WalkSpeedInput = createBottomInput("Walk Speed:", walkSpeed, 368, function(val)
+local FlySpeedInput = createBottomInput("Fly Speed:", flySpeed, 464, function(val) flySpeed = val end)
+local WalkSpeedInput = createBottomInput("Walk Speed:", walkSpeed, 490, function(val)
     walkSpeed = val
     if LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid") then
         LocalPlayer.Character:FindFirstChildOfClass("Humanoid").WalkSpeed = val
     end
 end)
-local JumpPowerInput = createBottomInput("Jump Power:", jumpPower, 394, function(val)
+local JumpPowerInput = createBottomInput("Jump Power:", jumpPower, 516, function(val)
     jumpPower = val
     if LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid") then
         LocalPlayer.Character:FindFirstChildOfClass("Humanoid").JumpPower = val
     end
 end)
+local ChatSpamTextInput = createTextInput("Chat Spam:", chatSpamText, 542, function(val)
+    chatSpamText = val
+end)
+local ChatSpamSpeedInput = createBottomInput("Spam Speed:", chatSpamDelay, 568, function(val)
+    chatSpamDelay = val
+end)
 
 walkSpeedConnection = RunService.Stepped:Connect(function()
     if LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid") then
         LocalPlayer.Character:FindFirstChildOfClass("Humanoid").WalkSpeed = walkSpeed
+    end
+end)
+
+-- Panic Escape Sneeze Button Action
+SneezeBtn.MouseButton1Click:Connect(function()
+    sendChatMessage("HACHO!")
+    local char = LocalPlayer.Character
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    if hrp then
+        local launchDir = (Camera.CFrame.LookVector + Vector3.new(0, 1.5, 0)).Unit
+        hrp.AssemblyLinearVelocity = launchDir * 300
     end
 end)
 
@@ -202,30 +231,117 @@ local customThemes = {
     {Name = "⚪", Color = Color3.fromRGB(255, 255, 255)}, {Name = "⚫", Color = DEFAULT_THEME}
 }
 
--- 2. Radio Panel
-local RadioPanel = Instance.new("Frame")
-RadioPanel.Size = UDim2.new(0, 120, 0, 95); RadioPanel.Position = UDim2.new(1, 5, 0, 0)
-RadioPanel.BackgroundColor3 = Color3.fromRGB(15, 15, 15); RadioPanel.BorderSizePixel = 1; RadioPanel.BorderColor3 = currentThemeColor
-RadioPanel.Visible = false; RadioPanel.Parent = MainFrame
+-- Music Player Panel Setup
+local MusicPanel = Instance.new("Frame")
+MusicPanel.Size = UDim2.new(0, 160, 0, 220); MusicPanel.Position = UDim2.new(1, 5, 0, 0)
+MusicPanel.BackgroundColor3 = Color3.fromRGB(15, 15, 15); MusicPanel.BorderSizePixel = 1; MusicPanel.BorderColor3 = currentThemeColor
+MusicPanel.Visible = false; MusicPanel.Parent = MainFrame
 
-local RadioTitle = Instance.new("TextLabel")
-RadioTitle.Size = UDim2.new(1, 0, 0, 20); RadioTitle.Position = UDim2.new(0, 0, 0, 2); RadioTitle.BackgroundTransparency = 1
-RadioTitle.Text = "AUDIO IMPUTER"; RadioTitle.TextColor3 = Color3.fromRGB(200, 200, 200); RadioTitle.Font = Enum.Font.SourceSansBold; RadioTitle.TextSize = 11; RadioTitle.Parent = RadioPanel
+local MusicTitle = Instance.new("TextLabel")
+MusicTitle.Size = UDim2.new(1, 0, 0, 22); MusicTitle.Position = UDim2.new(0, 0, 0, 2)
+MusicTitle.BackgroundTransparency = 1; MusicTitle.Text = "MUSIC PLAYER"; MusicTitle.TextColor3 = Color3.fromRGB(200, 200, 200)
+MusicTitle.Font = Enum.Font.SourceSansBold; MusicTitle.TextSize = 12; MusicTitle.Parent = MusicPanel
 
-local MusicInput = Instance.new("TextBox")
-MusicInput.Size = UDim2.new(0, 110, 0, 24); MusicInput.Position = UDim2.new(0, 5, 0, 24)
-MusicInput.BackgroundColor3 = Color3.fromRGB(25, 25, 25); MusicInput.BorderSizePixel = 1; MusicInput.BorderColor3 = Color3.fromRGB(45, 45, 45)
-MusicInput.Text = ""; MusicInput.PlaceholderText = "Paste Sound ID..."; MusicInput.TextColor3 = Color3.fromRGB(255, 255, 255); MusicInput.Font = Enum.Font.SourceSans; MusicInput.TextSize = 12; MusicInput.ClearTextOnFocus = false; MusicInput.Parent = RadioPanel
+local MusicScroll = Instance.new("ScrollingFrame")
+MusicScroll.Size = UDim2.new(1, -10, 0, 110); MusicScroll.Position = UDim2.new(0, 5, 0, 26)
+MusicScroll.BackgroundTransparency = 1; MusicScroll.BorderSizePixel = 0; MusicScroll.ScrollBarThickness = 4
+MusicScroll.Parent = MusicPanel
 
-local PlayMusicBtn = Instance.new("TextButton")
-PlayMusicBtn.Size = UDim2.new(0, 52, 0, 22); PlayMusicBtn.Position = UDim2.new(0, 5, 0, 54); PlayMusicBtn.BackgroundColor3 = Color3.fromRGB(35, 60, 35); PlayMusicBtn.BorderSizePixel = 0
-PlayMusicBtn.Text = "Play"; PlayMusicBtn.TextColor3 = Color3.fromRGB(255, 255, 255); PlayMusicBtn.Font = Enum.Font.SourceSansBold; PlayMusicBtn.TextSize = 12; PlayMusicBtn.Parent = RadioPanel
+local MusicListLayout = Instance.new("UIListLayout")
+MusicListLayout.Padding = UDim.new(0, 4); MusicListLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center; MusicListLayout.SortOrder = Enum.SortOrder.Name; MusicListLayout.Parent = MusicScroll
+
+local CustomIdBox = Instance.new("TextBox")
+CustomIdBox.Size = UDim2.new(1, -10, 0, 24); CustomIdBox.Position = UDim2.new(0, 5, 0, 142)
+CustomIdBox.BackgroundColor3 = Color3.fromRGB(25, 25, 25); CustomIdBox.BorderColor3 = Color3.fromRGB(50, 50, 50)
+CustomIdBox.PlaceholderText = "Enter Sound ID..."; CustomIdBox.Text = ""; CustomIdBox.TextColor3 = Color3.fromRGB(255, 255, 255)
+CustomIdBox.Font = Enum.Font.SourceSans; CustomIdBox.TextSize = 12; CustomIdBox.ClearTextOnFocus = false; CustomIdBox.Parent = MusicPanel
+
+local PlayCustomBtn = Instance.new("TextButton")
+PlayCustomBtn.Size = UDim2.new(1, -10, 0, 22); PlayCustomBtn.Position = UDim2.new(0, 5, 0, 170)
+PlayCustomBtn.BackgroundColor3 = Color3.fromRGB(30, 30, 30); PlayCustomBtn.BorderSizePixel = 0
+PlayCustomBtn.Text = "Play Custom ID"; PlayCustomBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+PlayCustomBtn.Font = Enum.Font.SourceSansBold; PlayCustomBtn.TextSize = 12; PlayCustomBtn.Parent = MusicPanel
 
 local StopMusicBtn = Instance.new("TextButton")
-StopMusicBtn.Size = UDim2.new(0, 52, 0, 22); StopMusicBtn.Position = UDim2.new(0, 63, 0, 54); StopMusicBtn.BackgroundColor3 = Color3.fromRGB(60, 35, 35); StopMusicBtn.BorderSizePixel = 0
-StopMusicBtn.Text = "Stop"; StopMusicBtn.TextColor3 = Color3.fromRGB(255, 255, 255); StopMusicBtn.Font = Enum.Font.SourceSansBold; StopMusicBtn.TextSize = 12; StopMusicBtn.Parent = RadioPanel
+StopMusicBtn.Size = UDim2.new(1, -10, 0, 20); StopMusicBtn.Position = UDim2.new(0, 5, 0, 196)
+StopMusicBtn.BackgroundColor3 = Color3.fromRGB(120, 30, 30); StopMusicBtn.BorderSizePixel = 0
+StopMusicBtn.Text = "Stop Music"; StopMusicBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+StopMusicBtn.Font = Enum.Font.SourceSansBold; StopMusicBtn.TextSize = 11; StopMusicBtn.Parent = MusicPanel
 
--- 3. Teleport Panel
+-- Active Sound Instance Holder
+local currentSound = nil
+
+local function playMusicId(id)
+    if currentSound then
+        currentSound:Stop()
+        currentSound:Destroy()
+        currentSound = nil
+    end
+    
+    local soundId = tonumber(id) and ("rbxassetid://" .. tostring(id)) or tostring(id)
+    
+    local sound = Instance.new("Sound")
+    sound.SoundId = soundId
+    sound.Volume = 1
+    sound.Looped = true
+    sound.Parent = SoundService or Camera or LocalPlayer:WaitForChild("PlayerGui")
+    
+    currentSound = sound
+    sound:Play()
+end
+
+-- Preset Songs Configuration (Easily add more presets here!)
+local presetSongs = {
+    {Name = "Stadium Rave", Id = "1846368080"},
+    {Name = "Raining Tacos", Id = "142376088"},
+    -- Example to add more:
+    -- {Name = "Preset 2", Id = "YOUR_SONG_ID_HERE"},
+}
+
+local function refreshMusicPresets()
+    for _, child in ipairs(MusicScroll:GetChildren()) do
+        if child:IsA("TextButton") then child:Destroy() end
+    end
+    
+    for _, song in ipairs(presetSongs) do
+        local btn = Instance.new("TextButton")
+        btn.Size = UDim2.new(1, 0, 0, 24)
+        btn.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
+        btn.BorderSizePixel = 0
+        btn.Text = song.Name
+        btn.TextColor3 = Color3.fromRGB(0, 255, 200)
+        btn.Font = Enum.Font.SourceSansBold
+        btn.TextSize = 12
+        btn.Parent = MusicScroll
+        
+        btn.MouseButton1Click:Connect(function()
+            playMusicId(song.Id)
+        end)
+    end
+end
+
+refreshMusicPresets()
+
+MusicSettingsBtn.MouseButton1Click:Connect(function()
+    MusicPanel.Visible = not MusicPanel.Visible
+end)
+
+PlayCustomBtn.MouseButton1Click:Connect(function()
+    local idText = CustomIdBox.Text
+    if idText ~= "" then
+        playMusicId(idText)
+    end
+end)
+
+StopMusicBtn.MouseButton1Click:Connect(function()
+    if currentSound then
+        currentSound:Stop()
+        currentSound:Destroy()
+        currentSound = nil
+    end
+end)
+
+-- 2. Teleport Panel
 local TPPanel = Instance.new("ScrollingFrame")
 TPPanel.Size = UDim2.new(0, 150, 0, 170); TPPanel.Position = UDim2.new(1, 5, 0, 105)
 TPPanel.BackgroundColor3 = Color3.fromRGB(15, 15, 15); TPPanel.BorderSizePixel = 1; TPPanel.BorderColor3 = currentThemeColor
@@ -234,7 +350,7 @@ TPPanel.ScrollBarThickness = 4; TPPanel.Visible = false; TPPanel.Parent = MainFr
 local TPListLayout = Instance.new("UIListLayout")
 TPListLayout.Padding = UDim.new(0, 4); TPListLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center; TPListLayout.SortOrder = Enum.SortOrder.Name; TPListLayout.Parent = TPPanel
 
--- 4. Target Status Panel
+-- 3. Target Status Panel
 local TargetStatusPanel = Instance.new("Frame")
 TargetStatusPanel.Size = UDim2.new(0, 160, 0, 280); TargetStatusPanel.Position = UDim2.new(1, 5, 0, 0)
 TargetStatusPanel.BackgroundColor3 = Color3.fromRGB(15, 15, 15); TargetStatusPanel.BorderSizePixel = 1; TargetStatusPanel.BorderColor3 = currentThemeColor
@@ -253,7 +369,7 @@ TargetScroll.Parent = TargetStatusPanel
 local TargetListLayout = Instance.new("UIListLayout")
 TargetListLayout.Padding = UDim.new(0, 4); TargetListLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center; TargetListLayout.SortOrder = Enum.SortOrder.Name; TargetListLayout.Parent = TargetScroll
 
--- 5. Waypoint Side Panel
+-- 4. Waypoint Side Panel
 local WaypointPanel = Instance.new("Frame")
 WaypointPanel.Size = UDim2.new(0, 160, 0, 280); WaypointPanel.Position = UDim2.new(1, 5, 0, 0)
 WaypointPanel.BackgroundColor3 = Color3.fromRGB(15, 15, 15); WaypointPanel.BorderSizePixel = 1; WaypointPanel.BorderColor3 = currentThemeColor
@@ -272,53 +388,9 @@ WaypointScroll.Parent = WaypointPanel
 local WaypointListLayout = Instance.new("UIListLayout")
 WaypointListLayout.Padding = UDim.new(0, 4); WaypointListLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center; WaypointListLayout.SortOrder = Enum.SortOrder.Name; WaypointListLayout.Parent = WaypointScroll
 
--- 6. Weapons Panel
-local WeaponsPanel = Instance.new("Frame")
-WeaponsPanel.Size = UDim2.new(0, 160, 0, 280); WeaponsPanel.Position = UDim2.new(1, 5, 0, 0)
-WeaponsPanel.BackgroundColor3 = Color3.fromRGB(15, 15, 15); WeaponsPanel.BorderSizePixel = 1; WeaponsPanel.BorderColor3 = currentThemeColor
-WeaponsPanel.Visible = false; WeaponsPanel.Parent = MainFrame
-
-local WeaponsTitle = Instance.new("TextLabel")
-WeaponsTitle.Size = UDim2.new(1, 0, 0, 22); WeaponsTitle.Position = UDim2.new(0, 0, 0, 2)
-WeaponsTitle.BackgroundTransparency = 1; WeaponsTitle.Text = "WEAPONS LIST"; WeaponsTitle.TextColor3 = Color3.fromRGB(200, 200, 200)
-WeaponsTitle.Font = Enum.Font.SourceSansBold; WeaponsTitle.TextSize = 12; WeaponsTitle.Parent = WeaponsPanel
-
-local WeaponsScroll = Instance.new("ScrollingFrame")
-WeaponsScroll.Size = UDim2.new(1, -10, 1, -28); WeaponsScroll.Position = UDim2.new(0, 5, 0, 24)
-WeaponsScroll.BackgroundTransparency = 1; WeaponsScroll.BorderSizePixel = 0; WeaponsScroll.ScrollBarThickness = 4
-WeaponsScroll.Parent = WeaponsPanel
-
-local WeaponsListLayout = Instance.new("UIListLayout")
-WeaponsListLayout.Padding = UDim.new(0, 4); WeaponsListLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center; WeaponsListLayout.SortOrder = Enum.SortOrder.Name; WeaponsListLayout.Parent = WeaponsScroll
-
---------------------------------------------------------------------
--- 7. GOOFY PANEL & FIXED JUMPSCARE SYSTEM
---------------------------------------------------------------------
-
-local GoofyPanel = Instance.new("Frame")
-GoofyPanel.Size = UDim2.new(0, 150, 0, 100); GoofyPanel.Position = UDim2.new(0, -155, 0, 0)
-GoofyPanel.BackgroundColor3 = Color3.fromRGB(15, 15, 15); GoofyPanel.BorderSizePixel = 1; GoofyPanel.BorderColor3 = currentThemeColor
-GoofyPanel.Visible = false; GoofyPanel.Parent = MainFrame
-
-local GoofyTitle = Instance.new("TextLabel")
-GoofyTitle.Size = UDim2.new(1, 0, 0, 22); GoofyTitle.Position = UDim2.new(0, 0, 0, 2)
-GoofyTitle.BackgroundTransparency = 1; GoofyTitle.Text = "GOOFY MENU 🤪"; GoofyTitle.TextColor3 = Color3.fromRGB(200, 200, 200)
-GoofyTitle.Font = Enum.Font.SourceSansBold; GoofyTitle.TextSize = 12; GoofyTitle.Parent = GoofyPanel
-
-local createGoofyBtn = function(text, yPos)
-    local btn = Instance.new("TextButton")
-    btn.Size = UDim2.new(0, 130, 0, 24); btn.Position = UDim2.new(0, 10, 0, yPos)
-    btn.BackgroundColor3 = Color3.fromRGB(30, 30, 30); btn.BorderColor3 = Color3.fromRGB(60, 60, 60); btn.Text = text
-    btn.TextColor3 = Color3.fromRGB(255, 255, 255); btn.Font = Enum.Font.SourceSansBold; btn.TextSize = 12; btn.Parent = GoofyPanel
-    return btn
-end
-
-local DiscoBtn = createGoofyBtn("Disco: OFF", 30)
-local JumpscareMenuBtn = createGoofyBtn("Jumpscare 👻 ➡️", 60)
-
--- Jumpscare Target Selection Panel
+-- 5. Jumpscare Target Selection Panel
 local JumpscarePanel = Instance.new("ScrollingFrame")
-JumpscarePanel.Size = UDim2.new(0, 150, 0, 170); JumpscarePanel.Position = UDim2.new(0, -310, 0, 0)
+JumpscarePanel.Size = UDim2.new(0, 150, 0, 170); JumpscarePanel.Position = UDim2.new(1, 5, 0, 0)
 JumpscarePanel.BackgroundColor3 = Color3.fromRGB(15, 15, 15); JumpscarePanel.BorderSizePixel = 1; JumpscarePanel.BorderColor3 = currentThemeColor
 JumpscarePanel.ScrollBarThickness = 4; JumpscarePanel.Visible = false; JumpscarePanel.Parent = MainFrame
 
@@ -387,34 +459,204 @@ local function refreshJumpscareList()
     end
 end
 
-GoofyBtn.MouseButton1Click:Connect(function()
-    GoofyPanel.Visible = not GoofyPanel.Visible
-    if not GoofyPanel.Visible then JumpscarePanel.Visible = false end
-end)
-
-JumpscareMenuBtn.MouseButton1Click:Connect(function()
+JumpscareBtn.MouseButton1Click:Connect(function()
     JumpscarePanel.Visible = not JumpscarePanel.Visible
     if JumpscarePanel.Visible then refreshJumpscareList() end
 end)
 
--- Disco System
-DiscoBtn.MouseButton1Click:Connect(function()
-    discoActive = not discoActive
-    DiscoBtn.Text = discoActive and "Disco: ON" or "Disco: OFF"
-    DiscoBtn.TextColor3 = discoActive and Color3.fromRGB(0, 255, 0) or Color3.fromRGB(255, 255, 255)
+-- Chat Spam System
+ChatSpamBtn.MouseButton1Click:Connect(function()
+    chatSpamActive = not chatSpamActive
+    ChatSpamBtn.Text = chatSpamActive and "Chat Spam: ON" or "Chat Spam: OFF"
+    ChatSpamBtn.TextColor3 = chatSpamActive and Color3.fromRGB(0, 255, 0) or Color3.fromRGB(255, 0, 0)
 
-    if discoActive then
-        discoThread = task.spawn(function()
-            while discoActive do
-                Lighting.OutdoorAmbient = Color3.fromHSV(tick() % 2 / 2, 1, 1)
-                Lighting.Ambient = Color3.fromHSV(tick() % 2 / 2, 0.8, 1)
-                task.wait(0.1)
+    if chatSpamActive then
+        chatSpamThread = task.spawn(function()
+            while chatSpamActive do
+                sendChatMessage(chatSpamText)
+                task.wait(chatSpamDelay)
             end
         end)
     else
-        if discoThread then task.cancel(discoThread) end
-        Lighting.OutdoorAmbient = Color3.fromRGB(128, 128, 128)
-        Lighting.Ambient = Color3.fromRGB(0, 0, 0)
+        chatSpamActive = false
+        if chatSpamThread then
+            task.cancel(chatSpamThread)
+            chatSpamThread = nil
+        end
+    end
+end)
+
+-- 6. Auto Dodge Mode Selection Panel
+local AutoDodgePanel = Instance.new("Frame")
+AutoDodgePanel.Size = UDim2.new(0, 150, 0, 90); AutoDodgePanel.Position = UDim2.new(1, 5, 0, 338)
+AutoDodgePanel.BackgroundColor3 = Color3.fromRGB(15, 15, 15); AutoDodgePanel.BorderSizePixel = 1; AutoDodgePanel.BorderColor3 = currentThemeColor
+AutoDodgePanel.Visible = false; AutoDodgePanel.Parent = MainFrame
+
+local ADTitle = Instance.new("TextLabel")
+ADTitle.Size = UDim2.new(1, 0, 0, 22); ADTitle.Position = UDim2.new(0, 0, 0, 2)
+ADTitle.BackgroundTransparency = 1; ADTitle.Text = "AUTO DODGE MODE"; ADTitle.TextColor3 = Color3.fromRGB(200, 200, 200)
+ADTitle.Font = Enum.Font.SourceSansBold; ADTitle.TextSize = 12; ADTitle.Parent = AutoDodgePanel
+
+local BulletModeBtn = Instance.new("TextButton")
+BulletModeBtn.Size = UDim2.new(0, 130, 0, 24); BulletModeBtn.Position = UDim2.new(0, 10, 0, 28)
+BulletModeBtn.BackgroundColor3 = Color3.fromRGB(40, 40, 40); BulletModeBtn.BorderSizePixel = 0
+BulletModeBtn.Text = "Bullet Mode [SELECTED]"; BulletModeBtn.TextColor3 = Color3.fromRGB(0, 255, 0)
+BulletModeBtn.Font = Enum.Font.SourceSansBold; BulletModeBtn.TextSize = 11; BulletModeBtn.Parent = AutoDodgePanel
+
+local SwordModeBtn = Instance.new("TextButton")
+SwordModeBtn.Size = UDim2.new(0, 130, 0, 24); SwordModeBtn.Position = UDim2.new(0, 10, 0, 58)
+SwordModeBtn.BackgroundColor3 = Color3.fromRGB(30, 30, 30); SwordModeBtn.BorderSizePixel = 0
+SwordModeBtn.Text = "Sword Mode"; SwordModeBtn.TextColor3 = Color3.fromRGB(180, 180, 180)
+SwordModeBtn.Font = Enum.Font.SourceSans; SwordModeBtn.TextSize = 11; SwordModeBtn.Parent = AutoDodgePanel
+
+local function updateDodgeModeUI()
+    if autoDodgeMode == "bullet" then
+        BulletModeBtn.Text = "Bullet Mode [SELECTED]"
+        BulletModeBtn.TextColor3 = Color3.fromRGB(0, 255, 0)
+        BulletModeBtn.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+        BulletModeBtn.Font = Enum.Font.SourceSansBold
+
+        SwordModeBtn.Text = "Sword Mode"
+        SwordModeBtn.TextColor3 = Color3.fromRGB(180, 180, 180)
+        SwordModeBtn.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+        SwordModeBtn.Font = Enum.Font.SourceSans
+    else
+        SwordModeBtn.Text = "Sword Mode [SELECTED]"
+        SwordModeBtn.TextColor3 = Color3.fromRGB(0, 255, 0)
+        SwordModeBtn.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+        SwordModeBtn.Font = Enum.Font.SourceSansBold
+
+        BulletModeBtn.Text = "Bullet Mode"
+        BulletModeBtn.TextColor3 = Color3.fromRGB(180, 180, 180)
+        BulletModeBtn.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+        BulletModeBtn.Font = Enum.Font.SourceSans
+    end
+end
+
+BulletModeBtn.MouseButton1Click:Connect(function()
+    autoDodgeMode = "bullet"
+    updateDodgeModeUI()
+end)
+
+SwordModeBtn.MouseButton1Click:Connect(function()
+    autoDodgeMode = "sword"
+    updateDodgeModeUI()
+end)
+
+local function getAttackerPlayer()
+    local closest, shortestDist = nil, math.huge
+    local myChar = LocalPlayer.Character
+    if not myChar or not myChar:FindFirstChild("HumanoidRootPart") then return nil end
+    local myPos = myChar.HumanoidRootPart.Position
+
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p ~= LocalPlayer and p.Character and p.Character:FindFirstChild("HumanoidRootPart") then
+            local dist = (myPos - p.Character.HumanoidRootPart.Position).Magnitude
+            if dist < shortestDist then
+                shortestDist = dist
+                closest = p
+            end
+        end
+    end
+    return closest
+end
+
+local function setupAutoDodge()
+    if autoDodgeConnection then autoDodgeConnection:Disconnect(); autoDodgeConnection = nil end
+
+    local char = LocalPlayer.Character
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+    if not hum then return end
+
+    local lastHealth = hum.Health
+
+    autoDodgeConnection = hum.HealthChanged:Connect(function(newHealth)
+        if newHealth < lastHealth and newHealth > 0 then
+            local myChar = LocalPlayer.Character
+            local myHRP = myChar and myChar:FindFirstChild("HumanoidRootPart")
+            if myHRP then
+                if autoDodgeMode == "bullet" then
+                    local originalCFrame = myHRP.CFrame
+                    local offsets = {
+                        Vector3.new(0, 0, -5), Vector3.new(0, 0, 5),
+                        Vector3.new(-5, 0, 0), Vector3.new(5, 0, 0),
+                        Vector3.new(0, 4, 0)
+                    }
+                    task.spawn(function()
+                        local startTime = tick()
+                        local idx = 1
+                        while tick() - startTime < 0.5 do
+                            if myHRP then
+                                local currentOffset = offsets[(idx % #offsets) + 1]
+                                myHRP.AssemblyLinearVelocity = Vector3.zero
+                                myHRP.AssemblyAngularVelocity = Vector3.zero
+                                myHRP.CFrame = originalCFrame * CFrame.new(currentOffset)
+                                idx = idx + 1
+                            end
+                            task.wait(0.03)
+                        end
+                        if myHRP then
+                            myHRP.AssemblyLinearVelocity = Vector3.zero
+                            myHRP.AssemblyAngularVelocity = Vector3.zero
+                            myHRP.CFrame = originalCFrame
+                        end
+                    end)
+                elseif autoDodgeMode == "sword" then
+                    local attacker = getAttackerPlayer()
+                    if attacker and attacker.Character and attacker.Character:FindFirstChild("HumanoidRootPart") then
+                        local attackerHRP = attacker.Character.HumanoidRootPart
+                        myHRP.AssemblyLinearVelocity = Vector3.zero
+                        myHRP.AssemblyAngularVelocity = Vector3.zero
+                        myHRP.CFrame = attackerHRP.CFrame * CFrame.new(0, 0, 3)
+                        VirtualInputManager:SendMouseButtonEvent(0, 0, 0, true, game, 0)
+                        VirtualInputManager:SendMouseButtonEvent(0, 0, 0, false, game, 0)
+                    end
+                end
+            end
+        end
+        lastHealth = newHealth
+    end)
+end
+
+AutoDodgeBtn.MouseButton1Click:Connect(function()
+    autoDodgeActive = not autoDodgeActive
+    AutoDodgeBtn.Text = autoDodgeActive and "Auto Dodge: ON ➡️" or "Auto Dodge: OFF ➡️"
+    AutoDodgeBtn.TextColor3 = autoDodgeActive and Color3.fromRGB(0, 255, 0) or Color3.fromRGB(255, 0, 0)
+    AutoDodgePanel.Visible = autoDodgeActive
+
+    if autoDodgeActive then
+        setupAutoDodge()
+    else
+        if autoDodgeConnection then autoDodgeConnection:Disconnect(); autoDodgeConnection = nil end
+    end
+end)
+
+-- Fling System
+FlingBtn.MouseButton1Click:Connect(function()
+    flingActive = not flingActive
+    FlingBtn.Text = flingActive and "Fling: ON" or "Fling: OFF"
+    FlingBtn.TextColor3 = flingActive and Color3.fromRGB(0, 255, 0) or Color3.fromRGB(255, 0, 0)
+
+    if flingActive then
+        flingConnection = RunService.RenderStepped:Connect(function()
+            if not flingActive then return end
+            local myChar = LocalPlayer.Character
+            local myHRP = myChar and myChar:FindFirstChild("HumanoidRootPart")
+
+            if myHRP then
+                myHRP.AssemblyAngularVelocity = Vector3.new(0, 10000, 0)
+            end
+        end)
+    else
+        if flingConnection then
+            flingConnection:Disconnect()
+            flingConnection = nil
+        end
+        local myChar = LocalPlayer.Character
+        local myHRP = myChar and myChar:FindFirstChild("HumanoidRootPart")
+        if myHRP then
+            myHRP.AssemblyAngularVelocity = Vector3.zero
+        end
     end
 end)
 
@@ -422,77 +664,18 @@ end)
 -- SYSTEM LOGIC & HANDLERS
 --------------------------------------------------------------------
 
-local function disableAllFeatures()
-    if BackgroundSound then BackgroundSound:Stop() end
-
-    flying = false
-    if flyKeepAliveConnection then flyKeepAliveConnection:Disconnect(); flyKeepAliveConnection = nil end
-    if flyBV then flyBV:Destroy(); flyBV = nil end
-    if flyBG then flyBG:Destroy(); flyBG = nil end
-
-    autoTargetActive = false
-    TargetStatusPanel.Visible = false
-    if autoTargetConnection then autoTargetConnection:Disconnect(); autoTargetConnection = nil end
-    if autoTargetInputConnection then autoTargetInputConnection:Disconnect(); autoTargetInputConnection = nil end
-
-    waypointsActive = false
-    WaypointPanel.Visible = false
-    if waypointInputConnection then waypointInputConnection:Disconnect(); waypointInputConnection = nil end
-
-    WeaponsPanel.Visible = false
-    GoofyPanel.Visible = false
-    JumpscarePanel.Visible = false
-
-    if discoActive then
-        discoActive = false
-        if discoThread then task.cancel(discoThread) end
-        Lighting.OutdoorAmbient = Color3.fromRGB(128, 128, 128)
-        Lighting.Ambient = Color3.fromRGB(0, 0, 0)
+-- Toggle GUI Visibility via KeyCode.Minus (-)
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+    if not gameProcessed and input.KeyCode == Enum.KeyCode.Minus then
+        MainFrame.Visible = not MainFrame.Visible
     end
-
-    espActive = false
-    if espConnection then espConnection:Disconnect(); espConnection = nil end
-    for _, p in ipairs(Players:GetPlayers()) do
-        if p.Character then
-            if p.Character:FindFirstChild("ESPHighlight") then p.Character.ESPHighlight:Destroy() end
-            if p.Character:FindFirstChild("Head") and p.Character.Head:FindFirstChild("ESPNameTag") then
-                p.Character.Head.ESPNameTag:Destroy()
-            end
-        end
-    end
-
-    noclip = false
-    if noclipConnection then noclipConnection:Disconnect(); noclipConnection = nil end
-    if noclipKeepAliveConnection then noclipKeepAliveConnection:Disconnect(); noclipKeepAliveConnection = nil end
-
-    fullBright = false
-    Lighting.Brightness = 1; Lighting.ClockTime = 12; Lighting.GlobalShadows = true
-
-    noFog = false
-    Lighting.FogEnd = 1000
-
-    infJump = false
-    if infJumpConnection then infJumpConnection:Disconnect(); infJumpConnection = nil end
-
-    if walkSpeedConnection then walkSpeedConnection:Disconnect(); walkSpeedConnection = nil end
-
-    if LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid") then
-        local hum = LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
-        hum.WalkSpeed = 16
-        hum.JumpPower = 50
-    end
-end
-
-CloseBtn.MouseButton1Click:Connect(function()
-    disableAllFeatures()
-    ScreenGui:Destroy()
 end)
 
 local function updateMenuTheme(newColor)
     currentThemeColor = newColor
-    MainFrame.BorderColor3 = newColor; ColorPanel.BorderColor3 = newColor; RadioPanel.BorderColor3 = newColor
+    MainFrame.BorderColor3 = newColor; ColorPanel.BorderColor3 = newColor
     TPPanel.BorderColor3 = newColor; TargetStatusPanel.BorderColor3 = newColor; WaypointPanel.BorderColor3 = newColor
-    WeaponsPanel.BorderColor3 = newColor; GoofyPanel.BorderColor3 = newColor; JumpscarePanel.BorderColor3 = newColor
+    JumpscarePanel.BorderColor3 = newColor; AutoDodgePanel.BorderColor3 = newColor; MusicPanel.BorderColor3 = newColor
 end
 
 for _, theme in ipairs(customThemes) do
@@ -503,22 +686,6 @@ for _, theme in ipairs(customThemes) do
 end
 
 ThemeSettingsBtn.MouseButton1Click:Connect(function() ColorPanel.Visible = not ColorPanel.Visible end)
-RadioBtn.MouseButton1Click:Connect(function() RadioPanel.Visible = not RadioPanel.Visible end)
-
-PlayMusicBtn.MouseButton1Click:Connect(function()
-    local cleanId = MusicInput.Text:gsub("%D", "")
-    if cleanId ~= "" then
-        pcall(function()
-            BackgroundSound:Stop()
-            BackgroundSound.SoundId = "rbxassetid://" .. cleanId
-            if not BackgroundSound.IsLoaded then
-                game:GetService("ContentProvider"):PreloadAsync({BackgroundSound})
-            end
-            BackgroundSound:Play()
-        end)
-    end
-end)
-StopMusicBtn.MouseButton1Click:Connect(function() BackgroundSound:Stop() end)
 
 -- Teleport System
 local function refreshTPList()
@@ -539,84 +706,6 @@ end
 TPBtn.MouseButton1Click:Connect(function()
     TPPanel.Visible = not TPPanel.Visible
     if TPPanel.Visible then refreshTPList() end
-end)
-
---------------------------------------------------------------------
--- WEAPONS SYSTEM
---------------------------------------------------------------------
-
-local function giveWeaponToPlayer(toolObj)
-    local backpack = LocalPlayer:FindFirstChild("Backpack")
-    if backpack then
-        local clonedTool = toolObj:Clone()
-        clonedTool.Parent = backpack
-    end
-
-    pcall(function()
-        for _, desc in ipairs(toolObj:GetDescendants()) do
-            if desc:IsA("RemoteEvent") then
-                desc:FireServer()
-            elseif desc:IsA("RemoteFunction") then
-                desc:InvokeServer()
-            end
-        end
-    end)
-
-    pcall(function()
-        for _, res in ipairs(ReplicatedStorage:GetDescendants()) do
-            if res:IsA("RemoteEvent") then
-                local lowerName = res.Name:lower()
-                if lowerName:find("give") or lowerName:find("buy") or lowerName:find("equip") or lowerName:find("weapon") then
-                    res:FireServer(toolObj.Name)
-                    res:FireServer(toolObj)
-                end
-            end
-        end
-    end)
-end
-
-local function refreshWeaponsList()
-    for _, child in ipairs(WeaponsScroll:GetChildren()) do
-        if child:IsA("TextButton") then child:Destroy() end
-    end
-
-    local foundWeapons = {}
-
-    local function searchContainer(container)
-        for _, item in ipairs(container:GetDescendants()) do
-            if item:IsA("Tool") and not foundWeapons[item.Name] then
-                foundWeapons[item.Name] = item
-            end
-        end
-    end
-
-    searchContainer(Lighting)
-    searchContainer(ReplicatedStorage)
-    searchContainer(workspace)
-    for _, p in ipairs(Players:GetPlayers()) do
-        if p:FindFirstChild("Backpack") then searchContainer(p.Backpack) end
-    end
-
-    for name, toolObj in pairs(foundWeapons) do
-        local wBtn = Instance.new("TextButton")
-        wBtn.Size = UDim2.new(1, 0, 0, 22)
-        wBtn.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
-        wBtn.BorderSizePixel = 0
-        wBtn.Text = name
-        wBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-        wBtn.Font = Enum.Font.SourceSansBold
-        wBtn.TextSize = 12
-        wBtn.Parent = WeaponsScroll
-
-        wBtn.MouseButton1Click:Connect(function()
-            giveWeaponToPlayer(toolObj)
-        end)
-    end
-end
-
-WeaponsBtn.MouseButton1Click:Connect(function()
-    WeaponsPanel.Visible = not WeaponsPanel.Visible
-    if WeaponsPanel.Visible then refreshWeaponsList() end
 end)
 
 --------------------------------------------------------------------
@@ -936,6 +1025,10 @@ LocalPlayer.CharacterAdded:Connect(function()
 
     if noclip then
         resetNoclipParts()
+    end
+
+    if autoDodgeActive then
+        setupAutoDodge()
     end
 end)
 
