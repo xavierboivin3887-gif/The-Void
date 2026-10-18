@@ -1,4 +1,4 @@
-The Void is an Roblox xeno executor with the following features
+The Void is an Roblox script with the following features
 
 1. Settings
 2. Music Player
